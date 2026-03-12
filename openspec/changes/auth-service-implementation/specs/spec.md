@@ -2,311 +2,231 @@
 
 ## Purpose
 
-The Authentication & Authorization Service provides centralized identity management, secure authentication, and fine-grained authorization for the Digital Lending Platform. This service SHALL implement OAuth2/OpenID Connect standards, manage user profiles and sessions, enforce role-based access control, and maintain comprehensive audit trails for regulatory compliance.
+The Authentication & Authorization Service provides secure, scalable identity management and access control for the Digital Lending Platform. The service implements OAuth2/OpenID Connect standards with JWT-based authentication, role-based authorization, and comprehensive audit capabilities.
 
-## Technologies and Runtime Stack
+## Technology Stack
 
-### Core Technologies
+### Runtime Environment
 - **Framework**: Spring Boot 3.x with Spring Security 6.x
-- **Authentication**: OAuth2, OpenID Connect, JWT tokens
-- **Database**: PostgreSQL with JPA/Hibernate ORM
-- **Caching**: Redis for session storage and token caching
+- **Language**: Java 17+ with Maven build system
+- **Authentication**: OAuth2/OpenID Connect with JWT tokens
+- **Database**: PostgreSQL 14+ with JPA/Hibernate ORM
+- **Caching**: Redis 7+ for session and token management
 - **Messaging**: Apache Kafka for event streaming
-- **Identity Provider**: Keycloak or AWS Cognito integration
-- **Container Runtime**: Docker on Kubernetes (EKS/AKS/GKE)
+- **Deployment**: Kubernetes with Docker containers
 
-### Development Stack
-- **Language**: Java 17+ with Spring Boot
-- **Build Tool**: Maven or Gradle
-- **Testing**: JUnit 5, Testcontainers, WireMock
-- **Documentation**: OpenAPI 3.0 specifications
-- **Monitoring**: Micrometer with Prometheus metrics
+### External Integrations
+- **Identity Provider**: Keycloak or AWS Cognito for OAuth2/OIDC
+- **Communication**: SMS/Email providers for OTP delivery
+- **Storage**: S3/Blob storage for document uploads
+- **Monitoring**: Prometheus metrics and distributed tracing
 
 ## Service Components
 
 ### Presentation Layer
-- **AuthController**: Exposes REST API endpoints for authentication operations
-  - Handles login, registration, token refresh, and logout requests
-  - Validates input parameters and delegates to service layer
-  - Returns standardized API responses with proper HTTP status codes
+- **AuthController**: REST API endpoints for authentication operations
+  - Handles HTTP requests/responses with proper error handling
+  - Implements request validation and security headers
+  - Manages session context and device tracking
 
 ### Business Layer
 - **AuthService**: Core authentication and authorization logic
-  - Implements user registration and credential validation
-  - Generates and validates JWT tokens with appropriate claims
-  - Manages user sessions and token lifecycle
-  - Coordinates with external OAuth providers
-
-- **SecurityValidator**: Token validation and RBAC enforcement
+  - Implements OAuth2 flows and JWT token management
+  - Handles user registration, login, and profile updates
+  - Manages role-based access control and permissions
+- **SecurityValidator**: Token validation and security enforcement
   - Validates JWT signatures and expiration
-  - Implements role-based and attribute-based access control
-  - Provides authorization decisions for API endpoints
+  - Implements RBAC policy evaluation
+  - Handles multi-factor authentication workflows
 
 ### Data Access Layer
-- **UserRepository**: JPA repository for user entity management
-  - Provides CRUD operations for user profiles
-  - Implements custom queries for authentication lookups
-  - Handles user-role relationship mapping
-
-- **AuthRepository**: Authentication-specific data operations
-  - Manages session data and token blacklisting
-  - Stores authentication attempts and security events
-  - Handles password reset tokens and verification codes
+- **AuthRepository**: Database operations for user data
+  - JPA/Hibernate implementation with PostgreSQL
+  - Optimized queries for user lookup and session management
+  - Transaction management for data consistency
 
 ### Integration Layer
-- **OAuthClient**: External OAuth provider integration
-  - Handles OAuth2 authorization code flow
-  - Manages provider-specific token exchange
-  - Implements provider discovery and configuration
+- **OAuthClient**: External identity provider integration
+  - OAuth2 client configuration and token exchange
+  - Provider-specific authentication flows
+  - Fallback mechanisms for provider unavailability
+- **EventPublisher**: Kafka event publishing for audit trails
+  - Publishes authentication events asynchronously
+  - Ensures event delivery with retry mechanisms
+  - Maintains event schema compatibility
 
-- **EventPublisher**: Kafka event publishing
-  - Publishes authentication events for audit trails
-  - Sends user profile change notifications
-  - Implements reliable event delivery patterns
-
-### Cross-Cutting Components
-- **JwtAuthenticationFilter**: Request interception and token validation
-  - Extracts and validates JWT tokens from requests
-  - Sets security context for downstream processing
-  - Handles token refresh and expiration scenarios
-
-## API Endpoints
+## API Specifications
 
 ### Authentication Endpoints
 
 #### POST /auth/register
-**Purpose**: Register new user with email/phone validation
+**Purpose**: Register new user account with email/phone verification
 **Input**: UserRegistrationRequest (email, phone, password)
-**Output**: UserResponse (userId, email, roles) - 201 Created
-**Main Flow**:
-1. Validate email format and password strength
-2. Check for existing user with same email/phone
-3. Hash password using bcrypt with salt
-4. Create user entity with default role
-5. Send verification email/SMS
-6. Return user details without sensitive data
+**Output**: 201 UserResponse with userId and roles, or 400 ValidationErrorResponse
+**Flow**: Validate input → Check uniqueness → Hash password → Store user → Return response
 
-#### POST /auth/login
-**Purpose**: Authenticate user and issue JWT tokens
-**Input**: LoginRequest (username, password)
-**Output**: TokenResponse (accessToken, refreshToken, expiresIn) - 200 OK
-**Main Flow**:
-1. Validate credentials against stored hash
-2. Check account status and verification
-3. Generate JWT access token with user claims
-4. Generate refresh token and store in database
-5. Log successful authentication event
-6. Return token pair with expiration details
+#### POST /auth/login  
+**Purpose**: Authenticate user credentials and issue JWT tokens
+**Input**: LoginRequest (username/email, password)
+**Output**: 200 TokenResponse with access/refresh tokens, or 401 ErrorResponse
+**Flow**: Validate credentials → Generate JWT → Store session → Publish login event → Return tokens
 
 #### POST /auth/refresh
-**Purpose**: Refresh expired access token using refresh token
+**Purpose**: Refresh expired access token using valid refresh token
 **Input**: TokenRefreshRequest (refreshToken)
-**Output**: TokenResponse (new accessToken, refreshToken, expiresIn) - 200 OK
-**Main Flow**:
-1. Validate refresh token signature and expiration
-2. Verify token exists in database and not revoked
-3. Generate new access token with updated claims
-4. Optionally rotate refresh token for security
-5. Update token usage tracking
-6. Return new token pair
+**Output**: 200 TokenResponse with new tokens, or 400 ErrorResponse
+**Flow**: Validate refresh token → Generate new access token → Update session → Return tokens
 
 ### Profile Management Endpoints
 
 #### GET /profiles
-**Purpose**: List user and co-applicant profiles with pagination
+**Purpose**: List user and co-applicant profiles with pagination and filtering
 **Security**: Bearer token with 'profile.read' scope
-**Output**: ProfileListResponse with pagination metadata - 200 OK
-**Main Flow**:
-1. Extract user context from JWT token
-2. Apply pagination and filtering parameters
-3. Query user profiles with co-applicant relationships
-4. Filter results based on user permissions
-5. Return paginated profile list
+**Parameters**: page, size, filter (search, sortBy, order)
+**Output**: 200 ProfileListResponse with items and pagination metadata
+**Flow**: Validate token → Apply filters → Query database → Return paginated results
 
 #### GET /profiles/{profileId}
-**Purpose**: Retrieve specific user profile details
-**Security**: Bearer token with 'profile.read' scope
-**Output**: UserProfile with co-applicant details - 200 OK
-**Main Flow**:
-1. Validate profile access permissions
-2. Query profile data including co-applicants
-3. Apply field-level security filtering
-4. Return complete profile information
+**Purpose**: Retrieve specific user profile by ID
+**Security**: Bearer token with 'profile.read' scope  
+**Output**: 200 UserProfile or 404 ErrorResponse
+**Flow**: Validate token → Check permissions → Query profile → Return data
 
 #### PUT /profiles/{profileId}
-**Purpose**: Update user profile information
+**Purpose**: Update user profile information with validation
 **Security**: Bearer token with 'profile.write' scope
-**Input**: UserProfileUpdateRequest
-**Output**: Updated UserProfile - 200 OK
-**Main Flow**:
-1. Validate update permissions and field access
-2. Identify sensitive fields requiring approval
-3. Apply immediate updates for non-sensitive fields
-4. Create change requests for sensitive fields
-5. Publish profile update events
-6. Return updated profile with pending changes
+**Input**: UserProfileUpdateRequest (firstName, lastName, email, phone, address)
+**Output**: 200 UserProfile or 400 ValidationErrorResponse
+**Flow**: Validate token → Check permissions → Validate changes → Update profile → Publish event
 
 #### POST /profiles/{profileId}/actions/requestChange
-**Purpose**: Submit change request for sensitive profile fields
+**Purpose**: Submit change request for sensitive profile fields requiring approval
 **Security**: Bearer token with 'profile.write' scope
 **Input**: ChangeRequest (fieldName, newValue, reason)
-**Output**: ChangeRequestResponse (requestId, status) - 202 Accepted
-**Main Flow**:
-1. Validate field sensitivity and change permissions
-2. Create change request with approval workflow
-3. Generate OTP for verification if required
-4. Send notification to user and approvers
-5. Return request tracking information
+**Output**: 202 ChangeRequestResponse with requestId and status
+**Flow**: Validate request → Create change request → Send OTP → Return request ID
 
 #### POST /profiles/{profileId}/otp
-**Purpose**: Verify OTP for sensitive profile changes
+**Purpose**: Verify OTP code for sensitive profile changes
 **Security**: Bearer token
 **Input**: OtpVerificationRequest (otpCode)
-**Output**: OtpVerificationResponse (verified) - 200 OK
-**Main Flow**:
-1. Validate OTP code against stored value
-2. Check OTP expiration and attempt limits
-3. Apply pending profile changes if verified
-4. Publish verification success/failure events
-5. Return verification result
+**Output**: 200 OtpVerificationResponse (verified: boolean)
+**Flow**: Validate OTP → Update verification status → Apply changes if verified
+
+#### POST /auth/users/{userId}/documents
+**Purpose**: Upload supporting documents for profile changes
+**Security**: Bearer token with 'profile.write' scope
+**Input**: DocumentUploadRequest (file, documentType) as multipart/form-data
+**Output**: 201 DocumentResponse with documentId and timestamp
+**Flow**: Validate file → Store in blob storage → Update change request → Return document ID
+
+### System Endpoints
+
+#### GET /health
+**Purpose**: Service health check for load balancer and monitoring
+**Output**: 200 HealthResponse with service status
+**Flow**: Check database connectivity → Validate external dependencies → Return health status
+
+#### GET /metrics
+**Purpose**: Prometheus metrics endpoint for monitoring and alerting
+**Output**: 200 text/plain with metrics data
+**Flow**: Collect service metrics → Format for Prometheus → Return metrics
 
 ## Data Models
 
 ### Core Entities
-
-#### User Entity
-- **id**: UUID - Primary key
-- **email**: String - Unique email address (required)
-- **phone**: String - Phone number with country code
-- **passwordHash**: String - Bcrypt hashed password
-- **roles**: List<Role> - Associated user roles
-- **status**: Enum - ACTIVE, INACTIVE, SUSPENDED, PENDING_VERIFICATION
-- **createdAt**: Timestamp - Account creation time
-- **lastLoginAt**: Timestamp - Last successful login
-- **verificationStatus**: Enum - EMAIL_VERIFIED, PHONE_VERIFIED, KYC_VERIFIED
-
-#### Role Entity
-- **name**: String - Role name (CUSTOMER, ADMIN, SUPPORT_AGENT)
-- **permissions**: List<String> - Associated permissions/scopes
-- **description**: String - Role description
-
-#### UserProfile Entity
-- **profileId**: UUID - Primary key
-- **userId**: UUID - Foreign key to User
-- **firstName**: String - User's first name (required)
-- **lastName**: String - User's last name (required)
-- **address**: String - Complete address
-- **coApplicants**: List<UserProfile> - Linked co-applicant profiles
-- **kycStatus**: Enum - KYC verification status
-- **documentsUploaded**: List<String> - Document reference IDs
+- **User**: Domain entity with id (UUID), email, passwordHash, roles (List<Role>)
+- **Role**: Entity with name and associated permissions
+- **AuthToken**: Value object containing JWT string and expiry timestamp
+- **UserProfile**: Complete profile with personal information and co-applicants
 
 ### Request/Response DTOs
+- **LoginRequest**: username, password
+- **TokenResponse**: accessToken, refreshToken, expiresIn
+- **UserRegistrationRequest**: email, phone, password with validation constraints
+- **UserProfileUpdateRequest**: Optional fields for profile updates
+- **ChangeRequest**: fieldName, newValue, reason for sensitive changes
+- **OtpVerificationRequest**: otpCode with pattern validation (4-6 digits)
 
-#### LoginRequest
-- **username**: String - Email or phone number (required)
-- **password**: String - User password (required)
-
-#### TokenResponse
-- **accessToken**: String - JWT access token (required)
-- **refreshToken**: String - Refresh token (required)
-- **expiresIn**: Integer - Token expiration in seconds (required)
-- **tokenType**: String - Always "Bearer"
-
-#### UserRegistrationRequest
-- **email**: String - Valid email format (required)
-- **phone**: String - E.164 format phone number
-- **password**: String - Minimum 8 characters with complexity rules (required)
-
-#### ChangeRequest
-- **fieldName**: String - Profile field to change (required)
-- **newValue**: String - New field value (required)
-- **reason**: String - Justification for change
-
-### Validation Rules
-- Email addresses MUST follow RFC 5322 format
-- Phone numbers MUST follow E.164 international format
-- Passwords MUST be minimum 8 characters with uppercase, lowercase, number, and special character
-- OTP codes MUST be 4-6 digits and expire within 5 minutes
-- Profile changes for PII fields MUST require OTP verification
+### Error Models
+- **ErrorResponse**: code, message, details array for general errors
+- **ValidationErrorResponse**: code, message, errors array with field-specific validation failures
 
 ## External System Interactions
 
-### OAuth Provider Integration
+### OAuth2 Provider Integration
 **Protocol**: OAuth2/OpenID Connect over HTTPS
-**Operations**:
-- Authorization code exchange for tokens
-- Token introspection and validation
-- User info retrieval from provider
-- Provider discovery and configuration
-
+**Operations**: 
+- GET /oauth2/authorize - Authorization code flow initiation
+- POST /oauth2/token - Token exchange and validation  
+- GET /userinfo - User profile information retrieval
 **Error Handling**: Circuit breaker pattern with fallback to local authentication
 **Retry Logic**: Exponential backoff for transient failures
 
-### KYC Service Integration
-**Protocol**: REST API over HTTPS with mutual TLS
+### Database Operations
+**Protocol**: JDBC with connection pooling
 **Operations**:
-- Identity verification initiation
-- Document upload and validation
-- KYC status polling and webhooks
-- eSign workflow integration
+- User CRUD operations with optimistic locking
+- Session management with TTL-based cleanup
+- Role and permission queries with caching
+**Consistency**: ACID transactions for critical operations
+**Performance**: Read replicas for query optimization
 
-**Error Handling**: Graceful degradation with manual verification fallback
-**Retry Logic**: Immediate retry for network errors, delayed retry for rate limits
-
-### Kafka Event Publishing
-**Protocol**: Kafka binary protocol with SASL/SSL
-**Topics**:
-- `auth.events.login` - User authentication events
-- `auth.events.profile-change` - Profile modification events
-- `auth.events.security` - Security-related events
-
-**Message Format**: Avro schema with event metadata
-**Delivery Guarantee**: At-least-once with idempotent consumers
+### Event Bus Integration  
+**Protocol**: Apache Kafka with AVRO schema registry
+**Events Published**:
+- UserRegistered: userId, email, timestamp, source
+- UserLoggedIn: userId, sessionId, deviceInfo, timestamp
+- ProfileUpdated: userId, changedFields, timestamp, requestId
+- SecurityEvent: eventType, userId, details, severity, timestamp
+**Delivery Guarantees**: At-least-once delivery with idempotent consumers
 
 ## Key Flows
 
 ### User Registration Flow
-1. **Input Validation**: Validate email format, password strength, and phone number
-2. **Duplicate Check**: Query database for existing users with same email/phone
-3. **Password Hashing**: Generate bcrypt hash with random salt
-4. **User Creation**: Create user entity with PENDING_VERIFICATION status
-5. **Verification Trigger**: Send email/SMS verification code
-6. **Event Publishing**: Publish user registration event to Kafka
-7. **Response**: Return user details without sensitive information
+1. Validate registration request (email format, password strength, phone number)
+2. Check email/phone uniqueness in database
+3. Hash password using bcrypt with salt
+4. Create user record with default role assignment
+5. Generate email verification token
+6. Send verification email via notification service
+7. Publish UserRegistered event to Kafka
+8. Return success response with user ID
 
-### Authentication Flow
-1. **Credential Validation**: Verify username/password against stored hash
-2. **Account Verification**: Check user status and verification requirements
-3. **Token Generation**: Create JWT with user claims and appropriate scopes
-4. **Session Management**: Store refresh token and update last login timestamp
-5. **Security Logging**: Log authentication attempt with IP and device info
-6. **Event Publishing**: Publish successful login event
-7. **Response**: Return access token, refresh token, and expiration details
+### Secure Login Flow
+1. Validate login credentials against database
+2. Check account status (active, locked, suspended)
+3. Verify password hash using bcrypt
+4. Generate JWT access token (15-minute expiry) and refresh token (7-day expiry)
+5. Store session information in Redis cache
+6. Publish UserLoggedIn event with device information
+7. Return token response with expiration details
 
-### Profile Change Approval Flow
-1. **Change Request**: User submits profile change for sensitive field
-2. **Sensitivity Check**: Determine if field requires approval workflow
-3. **OTP Generation**: Create and send verification code to user
-4. **Approval Workflow**: Route request to appropriate approvers if needed
-5. **OTP Verification**: Validate user-provided OTP code
-6. **Change Application**: Apply approved changes to user profile
-7. **Notification**: Send confirmation to user and audit trail
-8. **Event Publishing**: Publish profile change completion event
+### Profile Change Workflow
+1. Validate profile update request and user permissions
+2. Identify sensitive fields requiring additional verification
+3. For sensitive changes: Generate OTP and send via SMS/email
+4. Store pending change request with expiration
+5. User submits OTP for verification
+6. Validate OTP and apply approved changes
+7. Publish ProfileUpdated event for audit trail
+8. Return updated profile information
 
-### Token Refresh Flow
-1. **Token Validation**: Verify refresh token signature and expiration
-2. **Database Lookup**: Check token exists and not revoked
-3. **User Status Check**: Verify user account still active
-4. **New Token Generation**: Create fresh access token with updated claims
-5. **Token Rotation**: Optionally generate new refresh token
-6. **Usage Tracking**: Update token usage statistics
-7. **Response**: Return new token pair with expiration
+### Token Validation Flow
+1. Extract JWT from Authorization header
+2. Validate token signature using public key
+3. Check token expiration and issuer claims
+4. Verify user session exists in Redis cache
+5. Load user roles and permissions from database
+6. Evaluate access permissions for requested resource
+7. Allow or deny request based on authorization policy
 
-### Security Event Flow
-1. **Event Detection**: Identify suspicious activity or security violation
-2. **Event Classification**: Categorize threat level and required response
-3. **Immediate Response**: Apply security measures (account lock, token revocation)
-4. **Notification**: Alert user and security team of incident
-5. **Audit Logging**: Record detailed security event information
-6. **Event Publishing**: Publish security event to monitoring systems
-7. **Follow-up**: Initiate investigation or remediation procedures
+### Multi-Factor Authentication Flow
+1. User initiates sensitive operation (profile change, password reset)
+2. System generates 6-digit OTP with 5-minute expiration
+3. Send OTP via user's preferred channel (SMS/email)
+4. Store OTP hash in Redis with attempt counter
+5. User submits OTP within time window
+6. Validate OTP and check attempt limits (max 3 attempts)
+7. Mark operation as verified and proceed with request
+8. Publish SecurityEvent for audit compliance

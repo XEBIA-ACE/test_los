@@ -2,326 +2,161 @@
 
 ## Architecture Overview
 
-The Authentication & Authorization Service follows a hexagonal architecture pattern with clear separation of concerns across presentation, business, data access, and integration layers. The service implements OAuth2/OpenID Connect standards with JWT token management, role-based access control, and event-driven audit logging.
+The Authentication & Authorization Service implements a layered hexagonal architecture with clear separation of concerns between presentation, business logic, data access, and integration layers. The service follows Domain-Driven Design principles with bounded contexts for authentication, authorization, and user management.
 
 ### Design Principles
-- **Domain-Driven Design**: Clear bounded context for authentication and authorization
-- **Hexagonal Architecture**: Ports and adapters pattern for external integrations
-- **Event-Driven Architecture**: Asynchronous event publishing for audit and notifications
-- **Security by Design**: Defense in depth with multiple security layers
-- **Stateless Design**: JWT tokens enable horizontal scaling without session affinity
+- **Hexagonal Architecture**: Clean separation between core business logic and external adapters
+- **Dependency Inversion**: Business logic depends on abstractions, not concrete implementations  
+- **Single Responsibility**: Each component has a focused, well-defined purpose
+- **Stateless Design**: Service instances are stateless to enable horizontal scaling
+- **Event-Driven**: Asynchronous communication through domain events for loose coupling
+- **Security by Design**: Security controls embedded at every architectural layer
 
-## Component Architecture
+## Technical Approach
 
-### Core Components
+### Authentication Strategy
+The service implements OAuth2/OpenID Connect with JWT tokens for stateless authentication. External identity providers (Keycloak/AWS Cognito) handle primary authentication, while the service manages session state and authorization policies. JWT tokens contain user identity and role claims, enabling distributed authorization without centralized lookups.
 
-#### Authentication Controller (Presentation Layer)
-- **Responsibility**: HTTP request handling and response formatting
-- **Technology**: Spring Boot REST controllers with OpenAPI documentation
-- **Key Classes**: `AuthController`, `ProfileController`
-- **Security**: Input validation, rate limiting, and CORS configuration
+### Authorization Model
+Role-Based Access Control (RBAC) with hierarchical roles and fine-grained permissions. Roles are assigned to users and contain permission sets that map to API operations. Authorization decisions are made at the API Gateway level using JWT claims and enforced at the service level through Spring Security annotations.
 
-#### Authentication Service (Business Layer)
-- **Responsibility**: Core authentication logic and business rules
-- **Technology**: Spring Service components with transaction management
-- **Key Classes**: `AuthService`, `ProfileService`, `TokenService`
-- **Patterns**: Command pattern for operations, Strategy pattern for authentication methods
+### Data Management
+Polyglot persistence approach with PostgreSQL for transactional user data, Redis for session caching and token blacklists, and Kafka for event streaming. The service implements CQRS patterns for read/write separation and maintains eventual consistency through event sourcing.
 
-#### Security Validator (Cross-Cutting)
-- **Responsibility**: JWT validation and authorization decisions
-- **Technology**: Spring Security filters and method-level security
-- **Key Classes**: `JwtAuthenticationFilter`, `RoleBasedAccessControl`
-- **Integration**: Custom authentication providers and access decision voters
-
-#### Data Access Layer
-- **Responsibility**: Database operations and data persistence
-- **Technology**: Spring Data JPA with PostgreSQL
-- **Key Classes**: `UserRepository`, `RoleRepository`, `SessionRepository`
-- **Patterns**: Repository pattern with custom query methods
-
-#### Integration Layer
-- **Responsibility**: External system communication
-- **Technology**: Spring WebClient for HTTP, Kafka producers for events
-- **Key Classes**: `OAuthClient`, `KycServiceClient`, `EventPublisher`
-- **Patterns**: Circuit breaker, retry, and bulkhead patterns
+### Security Implementation
+Multi-layered security with OAuth2 authentication, JWT token validation, RBAC authorization, input validation, SQL injection prevention, and comprehensive audit logging. Sensitive operations require multi-factor authentication via OTP verification.
 
 ## Data Flow Architecture
 
-### Authentication Data Flow
-1. **Request Reception**: API Gateway forwards authenticated requests to service
-2. **Token Extraction**: JWT filter extracts and validates bearer tokens
-3. **Security Context**: Populate Spring Security context with user details
-4. **Business Processing**: Service layer executes authentication logic
-5. **Data Persistence**: Repository layer manages database transactions
-6. **Event Publishing**: Kafka publisher sends audit events asynchronously
-7. **Response Formation**: Controller formats and returns API responses
+### Authentication Flow
+1. **Client Request**: Mobile app initiates login with credentials
+2. **API Gateway**: Validates request format and rate limits
+3. **Auth Controller**: Receives login request and delegates to AuthService
+4. **Auth Service**: Validates credentials against database or external OAuth provider
+5. **Token Generation**: Creates JWT access/refresh tokens with user claims
+6. **Session Storage**: Stores session metadata in Redis for quick validation
+7. **Event Publishing**: Publishes authentication event to Kafka for audit
+8. **Response**: Returns tokens to client via secure HTTPS
 
-### Profile Management Data Flow
-1. **Profile Request**: User requests profile information or updates
-2. **Authorization Check**: Verify user permissions for requested profile
-3. **Change Detection**: Identify sensitive fields requiring approval workflow
-4. **OTP Generation**: Create verification codes for sensitive changes
-5. **Workflow Orchestration**: Route changes through approval processes
-6. **Data Validation**: Apply business rules and data integrity checks
-7. **Persistence**: Commit approved changes to database
-8. **Event Notification**: Publish profile change events to interested services
+### Authorization Flow  
+1. **Protected Request**: Client sends API request with JWT token
+2. **JWT Filter**: Extracts and validates token signature and expiration
+3. **User Context**: Loads user roles and permissions from token claims
+4. **Permission Check**: Evaluates required permissions against user roles
+5. **Access Decision**: Allows or denies request based on authorization policy
+6. **Audit Logging**: Records access attempts for security monitoring
+
+### Profile Management Flow
+1. **Profile Update**: User submits profile change request
+2. **Validation**: Service validates input and checks for sensitive fields
+3. **OTP Generation**: For sensitive changes, generates and sends OTP
+4. **Change Request**: Stores pending change with expiration timestamp
+5. **OTP Verification**: User submits OTP for validation
+6. **Change Application**: Applies verified changes to user profile
+7. **Event Publishing**: Publishes profile update event for downstream services
+8. **Notification**: Triggers confirmation notification to user
 
 ## API Design
 
-### RESTful API Principles
-- **Resource-Based URLs**: `/auth/login`, `/profiles/{id}`, `/profiles/{id}/otp`
-- **HTTP Methods**: Proper use of GET, POST, PUT, DELETE for operations
-- **Status Codes**: Meaningful HTTP status codes (200, 201, 400, 401, 403, 404, 500)
-- **Content Negotiation**: JSON request/response with proper content types
-- **Versioning**: API versioning through URL path (`/api/v1/auth`)
+### RESTful Principles
+The service exposes RESTful APIs following OpenAPI 3.0 specifications with consistent resource naming, HTTP status codes, and error response formats. All endpoints support JSON content type with proper CORS headers for web client integration.
 
 ### Security Headers
-- **Authorization**: Bearer token in Authorization header
-- **Content-Type**: application/json for request/response bodies
-- **X-Request-ID**: Correlation ID for request tracing
-- **X-Rate-Limit**: Rate limiting information in response headers
+All API responses include security headers (HSTS, CSP, X-Frame-Options) and implement proper authentication/authorization mechanisms. Sensitive endpoints require additional security measures like OTP verification.
 
 ### Error Handling
-- **Standardized Errors**: Consistent error response format with code and message
-- **Validation Errors**: Field-level validation errors with specific messages
-- **Security Errors**: Generic error messages to prevent information disclosure
-- **Logging**: Comprehensive error logging with correlation IDs
+Standardized error responses with consistent structure including error codes, messages, and detailed field-level validation errors. HTTP status codes follow REST conventions (200, 201, 400, 401, 403, 404, 500).
 
-## Database Design
+### Pagination and Filtering
+List endpoints support pagination with page/size parameters and filtering with search, sortBy, and order parameters. Responses include pagination metadata for client navigation.
 
-### User Management Schema
-```sql
--- Users table for authentication
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    phone VARCHAR(20),
-    password_hash VARCHAR(255) NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'PENDING_VERIFICATION',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_login_at TIMESTAMP,
-    verification_status VARCHAR(100)
-);
+## Component Design
 
--- Roles and permissions
-CREATE TABLE roles (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(100) UNIQUE NOT NULL,
-    description TEXT,
-    permissions JSONB
-);
+### AuthController (Presentation Layer)
+- **Responsibilities**: HTTP request/response handling, input validation, security headers
+- **Dependencies**: AuthService for business logic delegation
+- **Implementation**: Spring Boot REST controller with OpenAPI annotations
+- **Error Handling**: Global exception handler for consistent error responses
 
--- User-role relationships
-CREATE TABLE user_roles (
-    user_id UUID REFERENCES users(id),
-    role_id UUID REFERENCES roles(id),
-    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, role_id)
-);
+### AuthService (Business Layer)  
+- **Responsibilities**: Core authentication logic, token management, user operations
+- **Dependencies**: UserRepository for data access, OAuthClient for external auth
+- **Implementation**: Spring service with transactional boundaries
+- **Security**: Method-level security annotations and input sanitization
 
--- User profiles
-CREATE TABLE user_profiles (
-    profile_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
-    first_name VARCHAR(100) NOT NULL,
-    last_name VARCHAR(100) NOT NULL,
-    address TEXT,
-    kyc_status VARCHAR(50),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
+### UserRepository (Data Access Layer)
+- **Responsibilities**: Database operations for user entities
+- **Implementation**: JPA repository with custom queries and caching
+- **Performance**: Connection pooling and query optimization
+- **Consistency**: Transaction management with optimistic locking
 
-### Session and Token Management
-```sql
--- Refresh tokens
-CREATE TABLE refresh_tokens (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
-    token_hash VARCHAR(255) NOT NULL,
-    expires_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    revoked_at TIMESTAMP
-);
+### OAuthClient (Integration Layer)
+- **Responsibilities**: External OAuth provider integration
+- **Implementation**: Spring Security OAuth2 client with circuit breaker
+- **Resilience**: Retry logic and fallback mechanisms
+- **Configuration**: Provider-specific settings and endpoint mappings
 
--- Authentication events for audit
-CREATE TABLE auth_events (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
-    event_type VARCHAR(100) NOT NULL,
-    ip_address INET,
-    user_agent TEXT,
-    success BOOLEAN NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
+### EventPublisher (Integration Layer)
+- **Responsibilities**: Kafka event publishing for audit and notifications
+- **Implementation**: Spring Kafka producer with schema registry
+- **Reliability**: Guaranteed delivery with retry and dead letter queues
+- **Schema**: AVRO schemas for event structure and evolution
 
-## Security Implementation
+## File and Module Structure
 
-### JWT Token Structure
-```json
-{
-  "header": {
-    "alg": "RS256",
-    "typ": "JWT",
-    "kid": "auth-service-key-1"
-  },
-  "payload": {
-    "sub": "user-uuid",
-    "iss": "auth-service",
-    "aud": ["lending-platform"],
-    "exp": 1640995200,
-    "iat": 1640991600,
-    "roles": ["CUSTOMER"],
-    "scopes": ["profile.read", "profile.write"],
-    "email": "user@example.com"
-  }
-}
-```
+### Core Domain Modules
+- `com.lending.auth.domain.model`: User, Role, Permission entities
+- `com.lending.auth.domain.repository`: Repository interfaces
+- `com.lending.auth.domain.service`: Domain services and business logic
+- `com.lending.auth.domain.event`: Domain events and event handlers
 
-### Password Security
-- **Hashing**: bcrypt with cost factor 12 and random salt
-- **Validation**: Minimum 8 characters with complexity requirements
-- **Reset**: Secure token-based password reset with expiration
-- **History**: Prevent reuse of last 5 passwords
+### Application Layer
+- `com.lending.auth.application.service`: Application services and use cases
+- `com.lending.auth.application.dto`: Request/response DTOs
+- `com.lending.auth.application.mapper`: Entity-DTO mapping utilities
 
-### OAuth2 Integration
-- **Authorization Code Flow**: Standard OAuth2 flow with PKCE
-- **Token Exchange**: Secure token exchange with external providers
-- **Scope Management**: Fine-grained scope definitions for API access
-- **Provider Discovery**: Dynamic configuration from OpenID Connect discovery
+### Infrastructure Layer
+- `com.lending.auth.infrastructure.persistence`: JPA repositories and entities
+- `com.lending.auth.infrastructure.oauth`: OAuth client implementations
+- `com.lending.auth.infrastructure.messaging`: Kafka producers and consumers
+- `com.lending.auth.infrastructure.cache`: Redis cache implementations
 
-## Event-Driven Architecture
+### Presentation Layer
+- `com.lending.auth.presentation.controller`: REST controllers
+- `com.lending.auth.presentation.filter`: Security filters and interceptors
+- `com.lending.auth.presentation.config`: Spring configuration classes
 
-### Event Schema Design
-```json
-{
-  "eventId": "uuid",
-  "eventType": "USER_AUTHENTICATED",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "source": "auth-service",
-  "version": "1.0",
-  "data": {
-    "userId": "user-uuid",
-    "email": "user@example.com",
-    "ipAddress": "192.168.1.1",
-    "userAgent": "Mozilla/5.0...",
-    "success": true
-  },
-  "metadata": {
-    "correlationId": "request-uuid",
-    "causationId": "parent-event-uuid"
-  }
-}
-```
+### Configuration Files
+- `application.yml`: Service configuration and profiles
+- `bootstrap.yml`: Bootstrap configuration for service discovery
+- `logback-spring.xml`: Logging configuration with structured output
+- `Dockerfile`: Container image definition with security hardening
+- `k8s/`: Kubernetes deployment manifests and service definitions
 
-### Event Types
-- **USER_REGISTERED**: New user account creation
-- **USER_AUTHENTICATED**: Successful login attempts
-- **AUTHENTICATION_FAILED**: Failed login attempts
-- **PROFILE_UPDATED**: User profile modifications
-- **PASSWORD_CHANGED**: Password update events
-- **ACCOUNT_LOCKED**: Security-related account locks
-- **TOKEN_REFRESHED**: Token refresh operations
+## Security Architecture
 
-## Integration Patterns
+### Authentication Security
+- OAuth2/OIDC integration with external identity providers
+- JWT token validation with signature verification
+- Secure password hashing using bcrypt with salt
+- Session management with Redis-based token storage
+- Multi-factor authentication via OTP verification
 
-### Circuit Breaker Implementation
-```java
-@Component
-public class OAuthClientCircuitBreaker {
-    
-    @CircuitBreaker(name = "oauth-provider", fallbackMethod = "fallbackAuthentication")
-    @Retry(name = "oauth-provider")
-    @TimeLimiter(name = "oauth-provider")
-    public CompletableFuture<TokenResponse> exchangeToken(String authCode) {
-        return oauthClient.exchangeAuthorizationCode(authCode);
-    }
-    
-    public CompletableFuture<TokenResponse> fallbackAuthentication(String authCode, Exception ex) {
-        // Fallback to local authentication or cached tokens
-        return localAuthenticationService.authenticate(authCode);
-    }
-}
-```
+### Authorization Security  
+- Role-based access control with hierarchical permissions
+- Method-level security annotations in Spring Security
+- API Gateway integration for centralized policy enforcement
+- Dynamic permission evaluation based on user context
 
-### Kafka Event Publishing
-```java
-@Service
-public class AuthEventPublisher {
-    
-    @Autowired
-    private KafkaTemplate<String, AuthEvent> kafkaTemplate;
-    
-    @Async
-    public void publishAuthenticationEvent(AuthEvent event) {
-        try {
-            kafkaTemplate.send("auth.events.authentication", event.getUserId(), event)
-                .addCallback(
-                    result -> log.info("Event published successfully: {}", event.getEventId()),
-                    failure -> log.error("Failed to publish event: {}", event.getEventId(), failure)
-                );
-        } catch (Exception e) {
-            log.error("Error publishing authentication event", e);
-            // Store in dead letter queue or retry mechanism
-        }
-    }
-}
-```
+### Data Security
+- Encryption at rest for sensitive user data
+- TLS 1.3 for all external communications
+- Input validation and SQL injection prevention
+- Audit logging for all security-relevant operations
+- Secure document upload with virus scanning
 
-## Monitoring and Observability
-
-### Metrics Collection
-- **Authentication Metrics**: Login success/failure rates, token generation times
-- **Performance Metrics**: API response times, database query performance
-- **Security Metrics**: Failed authentication attempts, suspicious activity detection
-- **Business Metrics**: User registration rates, profile completion statistics
-
-### Health Check Implementation
-```java
-@Component
-public class AuthServiceHealthIndicator implements HealthIndicator {
-    
-    @Override
-    public Health health() {
-        return Health.up()
-            .withDetail("database", checkDatabaseConnection())
-            .withDetail("oauth-provider", checkOAuthProvider())
-            .withDetail("kafka", checkKafkaConnection())
-            .withDetail("redis", checkRedisConnection())
-            .build();
-    }
-}
-```
-
-### Distributed Tracing
-- **Trace Context**: Propagate trace IDs across service boundaries
-- **Span Creation**: Create spans for major operations (authentication, token validation)
-- **Correlation**: Link related operations across multiple services
-- **Performance Analysis**: Identify bottlenecks and optimization opportunities
-
-## Deployment Considerations
-
-### Container Configuration
-```dockerfile
-FROM openjdk:17-jre-slim
-COPY target/auth-service.jar app.jar
-EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8080/actuator/health || exit 1
-ENTRYPOINT ["java", "-jar", "/app.jar"]
-```
-
-### Kubernetes Deployment
-- **Resource Limits**: CPU and memory limits for predictable performance
-- **Health Probes**: Liveness and readiness probes for container orchestration
-- **ConfigMaps**: External configuration for environment-specific settings
-- **Secrets**: Secure storage of database credentials and JWT signing keys
-- **Service Mesh**: Istio or Linkerd for traffic management and security
-
-### Scaling Strategy
-- **Horizontal Scaling**: Stateless design enables multiple pod replicas
-- **Auto-scaling**: HPA based on CPU, memory, and custom metrics
-- **Database Scaling**: Read replicas for query performance
-- **Cache Scaling**: Redis cluster for session storage scaling
+### Operational Security
+- Container security with minimal base images
+- Secrets management via Kubernetes secrets or HashiCorp Vault
+- Network security with VPC isolation and security groups
+- Monitoring and alerting for security events and anomalies
